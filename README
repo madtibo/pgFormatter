@@ -298,6 +298,21 @@ HINTS
 
     Thanks to Alex Fedoseev for the atom package.
 
+  Formatting from Emacs
+    Add the following function in your .emacs file:
+
+         (defun sql-indent (beg end)
+           "Indent lines in region."
+           (interactive "*r")
+           (if (region-active-p)
+               (shell-command-on-region beg end "pg_format" (current-buffer) t)
+             (message "No active region")))
+
+    Then select a region and enter the 'M-x sql-indent' command.
+
+    You can call it directly using the 'M-x shell-command-on-region' or 'M-|'
+    command. Then enter the command to run e.g. '/usr/local/bin/pg_format'.
+
   Formatting from Visual Studio
     Thanks to Brady Holt a Visual Studio Code extension is available to
     formats PostgresSQL SQL using pgFormatter.
