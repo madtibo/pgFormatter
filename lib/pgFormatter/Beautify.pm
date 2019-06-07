@@ -641,6 +641,7 @@ sub beautify
     $self->{ '_is_in_where' } = 0;
     $self->{ '_is_in_from' } = 0;
     $self->{ '_is_in_join' } = 0;
+    $self->{ '_is_in_join_on' } = 0;
     $self->{ '_is_in_create' } = 0;
     $self->{ '_is_in_rule' } = 0;
     $self->{ '_is_in_create_function' } = 0;
@@ -1095,7 +1096,7 @@ sub beautify
             next;
 	}
 
-	# Fix case where we don't knwon if we are outside a SQL function
+	# Fix case where we don't know if we are outside a SQL function
 	if (defined $last and uc($last) eq 'AS'and defined $self->_next_token and $self->_next_token eq ';'
 			and $self->{ '_is_in_create_function' }) {
 		$self->{ '_is_in_create_function' } = 0;
@@ -1623,6 +1624,7 @@ sub beautify
             $self->{ '_is_in_where' } = 0;
             $self->{ '_is_in_from' } = 0;
             $self->{ '_is_in_join' } = 0;
+            $self->{ '_is_in_join_on' } = 0;
             $self->{ '_is_in_create' } = 0;
             $self->{ '_is_in_alter' } = 0;
 	    $self->{ '_is_in_rule' } = 0;
@@ -1667,6 +1669,8 @@ sub beautify
 	    $self->{ '_has_limit' } = 0;
 	    $self->{ '_not_a_type' } = 0;
             $self->{ '_is_subquery' } = 0;
+	    $self->_new_line($token,$last) if ($token eq ';');
+            $self->_add_token($token);
 
 	    if ( $self->{ '_insert_values' } )
 	    {
@@ -1789,9 +1793,11 @@ sub beautify
             if ($token =~ /^WHERE$/i && !$self->{ '_is_in_filter' })
 	    {
                 $self->_back($token, $last) if ($self->{ '_has_over_in_join' });
+                $self->_back($token, $last) if ($self->{ '_is_in_join_on' });
                 $self->{ '_is_in_where' }++;
                 $self->{ '_is_in_from' }-- if ($self->{ '_is_in_from' });
                 $self->{ '_is_in_join' } = 0;
+                $self->{ '_is_in_join_on' } = 0;
                 $self->{ '_has_over_in_join' } = 0;
             }
 	    elsif (!$self->{ '_is_in_function' })
@@ -1812,6 +1818,8 @@ sub beautify
                 $last = $self->_set_last($token, $last);
                 $self->{ '_is_in_join' } = 0;
                 $last = $self->_set_last($token, $last);
+                $self->{ '_is_in_join_on' } = 0;
+                $last = $token;
                 next;
             }
 	    elsif ($token =~ /^SET$/i and defined $last and uc($last) eq 'UPDATE' and !$self->_is_keyword($self->_next_token()))
@@ -1964,6 +1972,11 @@ sub beautify
                 $self->_back($token, $last);
 		$self->{ '_has_over_in_join' } = 0;
             }
+	    if ($self->{ '_is_in_join_on' })
+	    {
+	       $self->_back($token, $last);
+	       $self->{ '_is_in_join_on' } = 0;
+	    }
             $self->{ '_is_in_join' } = 0;
 	    $self->{ '_has_limit' } = 1 if (uc($token) eq 'LIMIT');
             if ($token !~ /^EXCEPTION/i) {
@@ -2157,6 +2170,11 @@ sub beautify
         elsif ( $token =~ /^(?:UNION|INTERSECT|EXCEPT)$/i )
 	{
             $self->{ 'no_break' } = 0;
+	    if ($self->{ '_is_in_join_on' })
+	    {
+	       $self->_back($token, $last);
+	       $self->{ '_is_in_join_on' } = 0;
+	    }
             if ($self->{ '_is_in_join' })
 	    {
                 $self->_back($token, $last);
@@ -2185,6 +2203,11 @@ sub beautify
                 $self->{ '_has_over_in_join' } = 0;
                 $self->_back($token, $last);
             }
+	    if ($self->{ '_is_in_join_on' } )
+	    {
+	       $self->_back($token, $last);
+	       $self->{ '_is_in_join_on' } = 0;
+	    }
 
             if ( $token =~ /(?:LEFT|RIGHT|FULL|CROSS|NATURAL)$/i )
 	    {
@@ -2208,8 +2231,22 @@ sub beautify
                 $self->_back($token, $last) if ($self->{ '_has_over_in_join' });
                 $self->{ '_has_over_in_join' } = 0;
             }
+	    if ($self->{ '_is_in_join_on' })
+	    {
+	       $self->_back($token, $last);
+	       $self->{ '_is_in_join_on' } = 0;
+	    }
             $self->_add_token( $token );
             $self->{ '_is_in_join' } = 1;
+        }
+
+        elsif ( $token =~ /^(?:ON)$/i and $self->{'wrap_limit'} > 0 and $self->{ '_is_in_join' })
+	{
+	   $self->_over($token,$last) if ( $self->{ '_level' } == 0 );
+	   $self->_over($token,$last);
+	   $self->_new_line($token);
+	   $self->_add_token( $token );
+	   $self->{ '_is_in_join_on' } = 1;
         }
 
         elsif ( $token =~ /^(?:AND|OR)$/i )
@@ -2229,6 +2266,11 @@ sub beautify
                 $self->_over($token,$last);
                 $self->{ '_has_over_in_join' } = 1;
             }
+	    if ($self->{ '_is_in_join_on' })
+	    {
+	       $self->_back($token, $last);
+	       $self->{ '_is_in_join_on' } = 0;
+	    }
             $self->{ '_is_in_join' } = 0;
             if ( !$self->{ '_is_in_if' } and !$self->{ '_is_in_index' }
 			    and (!$last or $last !~ /^(?:CREATE)$/i)
@@ -2470,7 +2512,7 @@ sub _add_token
 
     if ($DEBUG) {
         my ($package, $filename, $line) = caller;
-        print STDERR "DEBUG_ADD: line: $line => last=", ($last_token||''), ", token=$token\n";
+        print STDERR "DEBUG_ADD: line: $line => last=", ($last_token||''), ", token=$token, level=$self->{ '_level' }\n";
     }
 
     if ( $self->{ 'wrap' } ) {
@@ -2725,7 +2767,7 @@ sub _over
 
     if ($DEBUG) {
         my ($package, $filename, $line) = caller;
-        print STDERR "DEBUG_OVER: line: $line => last=$last, token=$token\n";
+        print STDERR "DEBUG_OVER: line: $line => last=$last, token=$token, level=$self->{ '_level' }\n";
     }
 
     ++$self->{ '_level' };
@@ -2745,7 +2787,7 @@ sub _back
 
     if ($DEBUG) {
         my ($package, $filename, $line) = caller;
-        print STDERR "DEBUG_BACK: line: $line => last=$last, token=$token\n";
+        print STDERR "DEBUG_BACK: line: $line => last=$last, token=$token, level=$self->{ '_level' }\n";
     }
     --$self->{ '_level' } if ( $self->{ '_level' } > 0 );
 }
@@ -2763,8 +2805,10 @@ sub _indent
 {
     my ( $self ) = @_;
 
-    if ( $self->{ '_new_line' } )
-    {
+    if ($DEBUG) {
+        print STDERR "DEBUG_INDENT: new_line=$self->{ '_new_line' }, spaces=$self->{ 'spaces' }, level=$self->{ '_level' }\n";
+    }
+    if ( $self->{ '_new_line' } ) {
         return $self->{ 'space' } x ( $self->{ 'spaces' } * ( $self->{ '_level' } // 0 ) );
     }
     # When this is not for identation force using space
@@ -2788,7 +2832,7 @@ sub _new_line
 
     if ($DEBUG and defined $token) {
         my ($package, $filename, $line) = caller;
-        print STDERR "DEBUG_NL: line: $line => last=", ($last||''), ", token=$token\n";
+        print STDERR "DEBUG_NL: line: $line => last=", ($last||''), ", token=$token, level=$self->{ '_level' }\n";
     }
 
     $self->{ 'content' } .= $self->{ 'break' } unless ( $self->{ '_new_line' } );
