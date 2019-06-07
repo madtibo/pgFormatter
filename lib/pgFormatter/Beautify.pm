@@ -631,6 +631,7 @@ sub beautify
     $self->{ '_level_stack' } = [];
     $self->{ '_level_parenthesis' } = [];
     $self->{ '_new_line' }    = 1;
+    $self->{ '_line_nb' } = 1;
     $self->{ '_current_sql_stmt' } = '';
     $self->{ '_is_meta_command' } = 0;
     $self->{ '_fct_code_delimiter' } = '';
@@ -683,6 +684,7 @@ sub beautify
     $self->{ '_is_in_operator' } = 0;
     $self->{ '_is_in_exception' } = 0;
     $self->{ '_is_in_sub_query' } = 0;
+    $self->{ '_was_in_sub_query' } = 0;
     $self->{ '_is_in_fetch' } = 0;
     $self->{ '_is_in_aggregate' } = 0;
     $self->{ '_is_in_value' } = 0;
@@ -758,6 +760,7 @@ sub beautify
 	    $self->{ '_is_in_filter' } = 0 if (!$self->{ '_parenthesis_filter_level' });
 
             if (!$self->{ '_is_in_function' }) {
+	        $self->{ '_level' } = $self->{ '_parenthesis_level' } if ($self->{ '_is_in_sub_query' } > 0);
                 $self->{ '_parenthesis_level' }-- if ($self->{ '_parenthesis_level' } > 0);
             } else {
                 $self->{ '_parenthesis_function_level' }-- if ($self->{ '_parenthesis_function_level' } > 0);
@@ -770,7 +773,8 @@ sub beautify
 
 	    if (!$self->{ '_parenthesis_level' } && $self->{ '_is_in_sub_query' }) {
 		$self->{ '_is_in_sub_query' }--;
-		$self->_back($token, $last);
+		$self->{ '_was_in_sub_query' } = 1;
+		$self->_new_line($token, $last);
 	    }
             if ($self->{ '_is_in_value' }) {
                 $self->{ '_parenthesis_level_value' }-- if ($self->{ '_parenthesis_level_value' });
@@ -1051,6 +1055,7 @@ sub beautify
 	    if (uc($token) eq 'RETURNS' and uc ($self->_next_token()) eq 'TABLE') {
 		    $self->{ '_is_in_returns_table' } = 1;
 	    }
+	    $self->_back($token, $last) if ($self->{ '_is_in_function' } or $self->{ '_is_in_procedure' } );
         } elsif ($token =~ /^AS$/i) {
             if ( !$self->{ '_is_in_index' } and $self->{ '_is_in_from' } and $last eq ')' and uc($token) eq 'AS' and $self->_next_token() eq '(') {
                 $self->{ '_is_in_index' } = 1;
@@ -1487,6 +1492,7 @@ sub beautify
 		{
 			$self->_back($token, $last);
 		}
+                $self->_back($token, $last) if (!$self->{ '_is_in_grouping' } and !$self->{ '_was_in_sub_query' });
                 $self->{ '_is_in_create' }-- if ($self->{ '_is_in_create' });
 		if ($self->{ '_is_in_type' })
 		{
@@ -1558,6 +1564,7 @@ sub beautify
 			       && !$self->{ '_is_in_distinct' }
 			       && !$self->{ '_is_in_array' }
                                && ($self->{ 'comma_break' } || $self->{ '_current_sql_stmt' } ne 'INSERT')
+                               && ($self->{ '_current_sql_stmt' } ne 'SELECT')
                                && ($self->{ '_current_sql_stmt' } ne 'RAISE')
                                && ($self->{ '_current_sql_stmt' } !~ /^(FUNCTION|PROCEDURE)$/
 				       || $self->{ '_fct_code_delimiter' } ne '')
@@ -1660,6 +1667,7 @@ sub beautify
 	    $self->{ '_is_in_operator' } = 0;
 	    $self->{ '_is_in_explain' }  = 0;
             $self->{ '_is_in_sub_query' } = 0;
+            $self->{ '_was_in_sub_query' } = 0;
 	    $self->{ '_is_in_fetch' } = 0;
             $self->{ '_is_in_aggregate' } = 0;
             $self->{ '_is_in_value' } = 0;
@@ -1670,6 +1678,7 @@ sub beautify
 	    $self->{ '_not_a_type' } = 0;
             $self->{ '_is_subquery' } = 0;
 	    $self->_new_line($token,$last) if ($token eq ';');
+
             $self->_add_token($token);
 
 	    if ( $self->{ '_insert_values' } )
@@ -1697,6 +1706,7 @@ sub beautify
 			    and !$self->{ '_is_in_declare' } and uc($last) ne 'VALUES')
 	    {
 		$self->{ '_new_line' } = 0;
+		$self->{ '_line_nb' } = 0;
                 $self->_new_line($token,$last);
 		$self->{ 'stmt_number' }++;
 		$self->{ 'content' } .= "-- Statement # $self->{ 'stmt_number' }\n" if ($self->{ 'numbering' } and $#{ $self->{ '_tokens' } } > 0);
@@ -1752,7 +1762,7 @@ sub beautify
 
         elsif ( $token =~ /^(?:FROM|WHERE|SET|RETURNING|HAVING|VALUES)$/i )
 	{
-            if (uc($token) eq 'FROM' and $self->{ '_has_order_by' } and !$self->{ '_parenthesis_level' })
+	    if (uc($token) eq 'FROM' and $self->{ '_has_order_by' } and !$self->{ '_parenthesis_level' })
 	    {
                 $self->_back($token, $last) if ($self->{ '_has_order_by' });
 	    }
@@ -1883,12 +1893,12 @@ sub beautify
                     $self->_new_line($token,$last) if (!$self->{ 'wrap_after' });
                     $self->_over($token,$last);
             }
-            elsif ( !$self->{ '_is_in_over' } and !$self->{ '_is_in_filter' } and ($token !~ /^SET$/i or $self->{ '_current_sql_stmt' } eq 'UPDATE') )
+            elsif ( !$self->{ '_is_in_over' } and !$self->{ '_is_in_filter' } and !$self->{ '_is_in_for' } and ($token !~ /^SET$/i or $self->{ '_current_sql_stmt' } eq 'UPDATE') )
 	    {
                 if (defined $self->_next_token and $self->_next_token !~ /\(|;/
 				and ($self->_next_token !~ /^(UPDATE|KEY|NO)$/i || uc($token) eq 'WHERE'))
 		{
-                    $self->_new_line($token,$last) if (!$self->{ 'wrap_after' });
+		    $self->_new_line($token,$last) if (!$self->{ 'wrap_after' } and !$token eq 'FROM' );
                     $self->_over($token,$last);
                 }
             }
@@ -2221,7 +2231,6 @@ sub beautify
             } 
             $self->_add_token( $token );
         }
-
         elsif ( $token =~ /^(?:JOIN)$/i and !$self->{ '_is_in_operator' })
 	{
             $self->{ 'no_break' } = 0;
@@ -2618,6 +2627,7 @@ sub _add_token
                 }
             }
             $token = join("\n", @lines);
+	    $self->{ '_line_nb' } = 0;
         }
 	else
 	{
@@ -2805,9 +2815,9 @@ sub _indent
 {
     my ( $self ) = @_;
 
-    if ($DEBUG) {
-        print STDERR "DEBUG_INDENT: new_line=$self->{ '_new_line' }, spaces=$self->{ 'spaces' }, level=$self->{ '_level' }\n";
-    }
+    # if ($DEBUG) {
+    #     print STDERR "DEBUG_INDENT: new_line=$self->{ '_new_line' }, spaces=$self->{ 'spaces' }, level=$self->{ '_level' }\n";
+    # }
     if ( $self->{ '_new_line' } ) {
         return $self->{ 'space' } x ( $self->{ 'spaces' } * ( $self->{ '_level' } // 0 ) );
     }
@@ -2837,6 +2847,7 @@ sub _new_line
 
     $self->{ 'content' } .= $self->{ 'break' } unless ( $self->{ '_new_line' } );
     $self->{ '_new_line' } = 1;
+    $self->{ '_line_nb' } += 1;
 }
 
 =head2 _next_token
